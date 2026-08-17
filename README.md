@@ -39,6 +39,3 @@ git push
 
 見 [gas/README.md](gas/README.md)。部署完把網址填進 `js/config.js` 的 `GAS_WEB_APP_URL`。
 
-### 通關密語
-
-目前密語：`818`（很短，僅供四人內部使用，不是高安全性設計）。如要換密語，重新跑 `python3 scripts/build.py --password <新密語>` 並更新告知四人。
