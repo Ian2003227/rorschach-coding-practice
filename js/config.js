@@ -2,4 +2,5 @@
 window.RorConfig = {
   GAS_WEB_APP_URL: "",
   USERS: ["郭", "彥", "慧", "言"],
+  REFERENCE_DRIVE_URL: "https://drive.google.com/drive/folders/1c7Jel23ea6NicAvC4kWarBUAOmOmu5HC",
 };

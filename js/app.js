@@ -12,6 +12,7 @@ const State = {
 };
 
 const LOCAL_KEY = () => `ror_local_attempts_${State.user}`;
+const LAST_ITEM_KEY = () => `ror_last_item_${State.user}`;
 
 function loadLocalAttempts() {
   try { return JSON.parse(localStorage.getItem(LOCAL_KEY()) || "{}"); } catch { return {}; }
@@ -20,6 +21,15 @@ function saveLocalAttempt(itemId, allCorrect) {
   const map = loadLocalAttempts();
   map[itemId] = { allCorrect, at: Date.now() };
   localStorage.setItem(LOCAL_KEY(), JSON.stringify(map));
+}
+
+function saveLastItem(itemId) {
+  if (itemId) localStorage.setItem(LAST_ITEM_KEY(), String(itemId));
+}
+function restoreLastPosition(savedId) {
+  if (!savedId) return;
+  const idx = State.filtered.indexOf(savedId);
+  if (idx >= 0) { State.posInOrder = idx; renderQuestion(); }
 }
 
 // ---------- Login ----------
@@ -60,6 +70,7 @@ async function doLogin() {
 
 // ---------- App shell / nav ----------
 function initApp() {
+  const savedLastId = parseInt(localStorage.getItem(LAST_ITEM_KEY()), 10) || null;
   document.querySelectorAll("nav.tabs button").forEach(btn => {
     btn.addEventListener("click", () => switchView(btn.dataset.view));
   });
@@ -72,6 +83,7 @@ function initApp() {
     document.getElementById("lightbox").classList.add("hidden");
   });
   rebuildOrder();
+  restoreLastPosition(savedLastId);
   switchView("practice");
 }
 
@@ -154,6 +166,7 @@ function renderQuestion() {
     `第 ${State.posInOrder + 1} / ${State.filtered.length} 題（題號 #${item ? item.id : "-"}）`;
 
   if (!item) { panel.innerHTML = "<p>此篩選條件下沒有題目。</p>"; return; }
+  saveLastItem(item.id);
 
   State.answer = blankAnswer();
   State.lastGrade = null;
@@ -164,6 +177,9 @@ function renderQuestion() {
   const rotBadge = item.rotation ? `<span class="rotation-badge">卡片轉向: ${item.rotation}</span>` : "";
 
   panel.innerHTML = `
+    <div style="margin-bottom:10px">
+      <a href="${window.RorConfig.REFERENCE_DRIVE_URL}" target="_blank" rel="noopener" class="btn-flag" style="display:inline-block;text-decoration:none;padding:6px 12px;border-radius:8px;font-size:0.85rem">📎 位置／形狀品質對照表（Google Drive）</a>
+    </div>
     <div class="stim-row">
       <div class="stim-box">
         <img id="cardImg" src="${cardImgPath}" alt="Card ${item.card}" />
@@ -525,25 +541,32 @@ function renderLocalOnlyDashboard(panel) {
 function renderReference() {
   const panel = document.getElementById("referencePanel");
 
-  // Empirical Z-value / Popular tables derived from the decrypted item bank itself.
-  const zByCard = {};
+  // Popular table derived from the decrypted item bank's own answer key (authoritative).
   const popByCard = {};
   for (const it of State.items) {
     const card = it.card;
-    zByCard[card] = zByCard[card] || { W: new Set(), "D/Dd": new Set(), S: new Set() };
-    if (it.answer.z != null) {
-      const bucket = it.answer.space ? "S" : (it.answer.location_base === "W" ? "W" : "D/Dd");
-      zByCard[card][bucket].add(it.answer.z);
-    }
     if (it.answer.popular) {
       popByCard[card] = popByCard[card] || new Set();
       popByCard[card].add(it.answer.contents.join(","));
     }
   }
 
+  // Official Exner CS Table 9: Organizational (Z) Values for each of the 10 cards.
+  const Z_TABLE = {
+    I:   { ZW: 1.0, ZA: 4.0, ZD: 6.0, ZS: 3.5 },
+    II:  { ZW: 4.5, ZA: 3.0, ZD: 5.5, ZS: 4.5 },
+    III: { ZW: 5.5, ZA: 3.0, ZD: 4.0, ZS: 4.5 },
+    IV:  { ZW: 2.0, ZA: 4.0, ZD: 3.5, ZS: 5.0 },
+    V:   { ZW: 1.0, ZA: 2.5, ZD: 5.0, ZS: 4.0 },
+    VI:  { ZW: 2.5, ZA: 2.5, ZD: 6.0, ZS: 6.5 },
+    VII: { ZW: 2.5, ZA: 1.0, ZD: 3.0, ZS: 4.0 },
+    VIII:{ ZW: 4.5, ZA: 3.0, ZD: 3.0, ZS: 4.0 },
+    IX:  { ZW: 5.5, ZA: 2.5, ZD: 4.5, ZS: 5.0 },
+    X:   { ZW: 5.5, ZA: 4.0, ZD: 4.5, ZS: 6.0 },
+  };
   const zRows = window.RorConst.CARDS.map(c => {
-    const z = zByCard[c] || { W: new Set(), "D/Dd": new Set(), S: new Set() };
-    return `<tr><th>${c}</th><td>${[...z.W].sort((a, b) => a - b).join(", ") || "-"}</td><td>${[...z["D/Dd"]].sort((a, b) => a - b).join(", ") || "-"}</td><td>${[...z.S].sort((a, b) => a - b).join(", ") || "-"}</td></tr>`;
+    const z = Z_TABLE[c];
+    return `<tr><th>${c}</th><td>${z.ZW}</td><td>${z.ZA}</td><td>${z.ZD}</td><td>${z.ZS}</td></tr>`;
   }).join("");
 
   const popRows = window.RorConst.CARDS.map(c => {
@@ -558,9 +581,8 @@ function renderReference() {
   panel.innerHTML = `
     <h2>速查表</h2>
 
-    <h3>Z 分數（本題庫實際出現的數值，依位置類型分組）</h3>
-    <p style="color:var(--muted);font-size:0.85rem">這是從本題庫 300 題答案key中萃取出來的實際數值，不是外部教科書表格；同一分組內若有多個數值，代表該類型下仍需依組織複雜程度判斷。</p>
-    <table class="ref-table"><thead><tr><th>卡片</th><th>W（整體）</th><th>D／Dd（局部）</th><th>S（含空白）</th></tr></thead><tbody>${zRows}</tbody></table>
+    <h3>Z 分數（Table 9：各卡片組織活動分數）</h3>
+    <table class="ref-table"><thead><tr><th>卡片</th><th>ZW<br><span style="font-weight:400;color:var(--muted)">(DQ: +, v/+, o)</span></th><th>ZA<br><span style="font-weight:400;color:var(--muted)">Adjacent Detail</span></th><th>ZD<br><span style="font-weight:400;color:var(--muted)">Distant Detail</span></th><th>ZS<br><span style="font-weight:400;color:var(--muted)">White Space</span></th></tr></thead><tbody>${zRows}</tbody></table>
 
     <h3>Popular 反應（本題庫中標記 P 的內容組合）</h3>
     <table class="ref-table"><thead><tr><th>卡片</th><th>內容</th></tr></thead><tbody>${popRows}</tbody></table>
