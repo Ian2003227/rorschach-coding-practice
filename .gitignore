@@ -6,3 +6,7 @@ pages/
 
 .DS_Store
 node_modules/
+
+# Raw location-map JPGs are embedded (base64) into the encrypted blob at build time —
+# the plaintext copies must not be committed (copyrighted workbook page content).
+assets/loc/*.jpg
