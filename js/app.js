@@ -19,8 +19,49 @@ function loadLocalAttempts() {
 }
 function saveLocalAttempt(itemId, allCorrect) {
   const map = loadLocalAttempts();
-  map[itemId] = { allCorrect, at: Date.now() };
+  const prevCount = (map[itemId] && map[itemId].count) || 0;
+  map[itemId] = { allCorrect, at: Date.now(), count: prevCount + 1 };
   localStorage.setItem(LOCAL_KEY(), JSON.stringify(map));
+}
+
+// Build a per-item {allCorrect, at, count} summary from this user's server-side attempt
+// history, then merge it into the local cache so status badges / wrong-filter / overview
+// reflect what was answered on OTHER devices too, not just this browser.
+function buildServerAttemptMap(attempts, user) {
+  const byItem = {};
+  for (const a of attempts) {
+    if (a.user !== user) continue;
+    (byItem[a.item_id] = byItem[a.item_id] || []).push(a);
+  }
+  const map = {};
+  for (const [id, list] of Object.entries(byItem)) {
+    list.sort((x, y) => new Date(x.timestamp) - new Date(y.timestamp));
+    const last = list[list.length - 1];
+    map[id] = {
+      allCorrect: last.all_correct === true || last.all_correct === "TRUE",
+      at: new Date(last.timestamp).getTime() || Date.now(),
+      count: list.length,
+    };
+  }
+  return map;
+}
+
+function mergeServerIntoLocal(serverMap) {
+  const local = loadLocalAttempts();
+  for (const [id, rec] of Object.entries(serverMap)) {
+    local[id] = rec;
+  }
+  localStorage.setItem(LOCAL_KEY(), JSON.stringify(local));
+}
+
+async function syncAttemptsFromServer() {
+  try {
+    const data = await window.RorGas.fetchAll();
+    const serverMap = buildServerAttemptMap(data.attempts || [], State.user);
+    mergeServerIntoLocal(serverMap);
+    // refresh whatever's on screen so badges/overview reflect the sync
+    if (!document.getElementById("view-practice").classList.contains("hidden")) renderQuestion();
+  } catch (e) { /* offline or GAS not configured yet — local cache still works */ }
 }
 
 function saveLastItem(itemId) {
@@ -58,7 +99,7 @@ async function doLogin() {
     document.getElementById("appRoot").classList.remove("hidden");
     document.getElementById("userBadge").textContent = "使用者：" + user;
     initApp();
-    window.RorGas.flushQueue().catch(() => {});
+    window.RorGas.flushQueue().then(() => syncAttemptsFromServer()).catch(() => syncAttemptsFromServer());
   } catch (e) {
     if (String(e.message).includes("WRONG_PASSWORD")) {
       errEl.textContent = "密語錯誤，請再試一次";
@@ -79,6 +120,7 @@ function initApp() {
   document.getElementById("sectionFilter").addEventListener("change", rebuildOrder);
   document.getElementById("cardFilter").addEventListener("change", rebuildOrder);
   document.getElementById("jumpBtn").addEventListener("click", jumpToItem);
+  document.getElementById("overviewBtn").addEventListener("click", toggleOverview);
   document.getElementById("lightbox").addEventListener("click", () => {
     document.getElementById("lightbox").classList.add("hidden");
   });
@@ -126,6 +168,58 @@ function rebuildOrder() {
   State.filtered = list;
   State.posInOrder = 0;
   renderQuestion();
+  if (!document.getElementById("overviewPanel").classList.contains("hidden")) renderOverview();
+}
+
+function toggleOverview() {
+  const panel = document.getElementById("overviewPanel");
+  panel.classList.toggle("hidden");
+  if (!panel.classList.contains("hidden")) renderOverview();
+}
+
+function renderOverview() {
+  const sec = document.getElementById("sectionFilter").value;
+  const card = document.getElementById("cardFilter").value;
+  const local = loadLocalAttempts();
+  const items = State.items.filter(i => (!sec || String(i.section) === sec) && (!card || i.card === card));
+
+  const done = items.filter(i => local[i.id]);
+  const correct = done.filter(i => local[i.id].allCorrect).length;
+  const wrong = done.length - correct;
+
+  const chips = items.map(i => {
+    const st = local[i.id];
+    let style = "";
+    let title = `#${i.id}：尚未作答`;
+    if (i.missing_source) {
+      style = "opacity:0.35";
+      title = `#${i.id}：原書缺頁，暫無題目文字`;
+    } else if (st) {
+      style = st.allCorrect
+        ? "background:var(--ok-bg);color:var(--ok);border-color:var(--ok)"
+        : "background:var(--bad-bg);color:var(--bad);border-color:var(--bad)";
+      title = `#${i.id}：${st.allCorrect ? "答對過" : "答錯過"}${st.count > 1 ? `（共 ${st.count} 次）` : ""}`;
+    }
+    return `<span class="chip overview-chip" data-id="${i.id}" style="${style}" title="${title}">${i.id}</span>`;
+  }).join("");
+
+  document.getElementById("overviewPanel").innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <strong>題目總覽（${items.length} 題中已作答 ${done.length} 題：${correct} 對／${wrong} 錯）</strong>
+      <span style="font-size:0.8rem;color:var(--muted)">🟢 答對過　🔴 答錯過　⚪ 未作答　點擊可直接跳題</span>
+    </div>
+    <div class="chip-list" style="max-height:320px">${chips}</div>
+  `;
+  document.querySelectorAll(".overview-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const id = parseInt(chip.dataset.id, 10);
+      const idx = State.filtered.indexOf(id);
+      if (idx >= 0) State.posInOrder = idx;
+      else { State.filtered.unshift(id); State.posInOrder = 0; }
+      renderQuestion();
+      document.getElementById("questionPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
 }
 
 function jumpToItem() {
@@ -176,9 +270,19 @@ function renderQuestion() {
   const cardImgPath = `assets/cards/card_${item.card}.jpg`;
   const rotBadge = item.rotation ? `<span class="rotation-badge">卡片轉向: ${item.rotation}</span>` : "";
 
+  const status = loadLocalAttempts()[item.id];
+  let statusBadge = `<span class="rotation-badge" style="background:var(--line);color:var(--muted)">尚未作答過</span>`;
+  if (status) {
+    const times = status.count > 1 ? `（共答 ${status.count} 次）` : "";
+    statusBadge = status.allCorrect
+      ? `<span class="rotation-badge" style="background:var(--ok-bg);color:var(--ok)">✓ 你之前答對過${times}</span>`
+      : `<span class="rotation-badge" style="background:var(--bad-bg);color:var(--bad)">✗ 上次作答有錯${times}</span>`;
+  }
+
   panel.innerHTML = `
-    <div style="margin-bottom:10px">
+    <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <a href="${window.RorConfig.REFERENCE_DRIVE_URL}" target="_blank" rel="noopener" class="btn-flag" style="display:inline-block;text-decoration:none;padding:6px 12px;border-radius:8px;font-size:0.85rem">📎 位置／形狀品質對照表（Google Drive）</a>
+      ${statusBadge}
     </div>
     <div class="stim-row">
       <div class="stim-box">
@@ -426,6 +530,8 @@ async function doGrade(item) {
     all_correct: result.allCorrect,
     duration_sec: 0,
   }).catch(() => {});
+
+  if (!document.getElementById("overviewPanel").classList.contains("hidden")) renderOverview();
 }
 
 function doFlag(item) {
