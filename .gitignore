@@ -1,0 +1,8 @@
+# Raw/plaintext item bank must NEVER be committed (copyrighted test material + answer key)
+data/items.json
+data-raw/
+pages/
+*.pdf
+
+.DS_Store
+node_modules/
