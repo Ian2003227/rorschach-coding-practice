@@ -17,10 +17,10 @@ const LAST_ITEM_KEY = () => `ror_last_item_${State.user}`;
 function loadLocalAttempts() {
   try { return JSON.parse(localStorage.getItem(LOCAL_KEY()) || "{}"); } catch { return {}; }
 }
-function saveLocalAttempt(itemId, allCorrect) {
+function saveLocalAttempt(itemId, allCorrect, answer, fieldResults) {
   const map = loadLocalAttempts();
   const prevCount = (map[itemId] && map[itemId].count) || 0;
-  map[itemId] = { allCorrect, at: Date.now(), count: prevCount + 1 };
+  map[itemId] = { allCorrect, at: Date.now(), count: prevCount + 1, answer, fieldResults };
   localStorage.setItem(LOCAL_KEY(), JSON.stringify(map));
 }
 
@@ -37,10 +37,15 @@ function buildServerAttemptMap(attempts, user) {
   for (const [id, list] of Object.entries(byItem)) {
     list.sort((x, y) => new Date(x.timestamp) - new Date(y.timestamp));
     const last = list[list.length - 1];
+    let answer = null, fieldResults = null;
+    try { answer = JSON.parse(last.answer_json || last.answer || "null"); } catch { /* ignore */ }
+    try { fieldResults = JSON.parse(last.field_results_json || last.field_results || "null"); } catch { /* ignore */ }
     map[id] = {
       allCorrect: last.all_correct === true || last.all_correct === "TRUE",
       at: new Date(last.timestamp).getTime() || Date.now(),
       count: list.length,
+      answer,
+      fieldResults,
     };
   }
   return map;
@@ -121,6 +126,15 @@ function initApp() {
   document.getElementById("cardFilter").addEventListener("change", rebuildOrder);
   document.getElementById("jumpBtn").addEventListener("click", jumpToItem);
   document.getElementById("overviewBtn").addEventListener("click", toggleOverview);
+  const reviewToggle = document.getElementById("reviewModeToggle");
+  const reviewKey = `ror_review_mode_${State.user}`;
+  reviewToggle.checked = localStorage.getItem(reviewKey) === "1";
+  State.reviewMode = reviewToggle.checked;
+  reviewToggle.addEventListener("change", e => {
+    State.reviewMode = e.target.checked;
+    localStorage.setItem(reviewKey, e.target.checked ? "1" : "0");
+    renderQuestion();
+  });
   document.getElementById("lightbox").addEventListener("click", () => {
     document.getElementById("lightbox").classList.add("hidden");
   });
@@ -262,7 +276,9 @@ function renderQuestion() {
   if (!item) { panel.innerHTML = "<p>此篩選條件下沒有題目。</p>"; return; }
   saveLastItem(item.id);
 
-  State.answer = blankAnswer();
+  const status = loadLocalAttempts()[item.id];
+  const canReview = State.reviewMode && status && status.answer && status.fieldResults;
+  State.answer = canReview ? JSON.parse(JSON.stringify(status.answer)) : blankAnswer();
   State.lastGrade = null;
   State.langMode = State.langMode || "both";
 
@@ -270,7 +286,6 @@ function renderQuestion() {
   const cardImgPath = `assets/cards/card_${item.card}.jpg`;
   const rotBadge = item.rotation ? `<span class="rotation-badge">卡片轉向: ${item.rotation}</span>` : "";
 
-  const status = loadLocalAttempts()[item.id];
   let statusBadge = `<span class="rotation-badge" style="background:var(--line);color:var(--muted)">尚未作答過</span>`;
   if (status) {
     const times = status.count > 1 ? `（共答 ${status.count} 次）` : "";
@@ -325,6 +340,13 @@ function renderQuestion() {
   renderTextBlock(item);
   renderCodingForm();
 
+  if (canReview) {
+    renderComparisonFeedback(
+      document.getElementById("feedbackBlock"), item, status.fieldResults, status.answer,
+      "📝 訂正模式：這是你上次的作答（已幫你填回表單，可直接修改後重新送出）"
+    );
+  }
+
   document.getElementById("gradeBtn").addEventListener("click", () => doGrade(item));
   document.getElementById("nextBtn").addEventListener("click", () => {
     State.posInOrder = Math.min(State.posInOrder + 1, State.filtered.length - 1);
@@ -363,6 +385,61 @@ function renderTextBlock(item) {
   }
   html += `</div>`;
   document.getElementById("textBlock").innerHTML = html;
+}
+
+// ---------- Answer comparison (used by grading AND review mode) ----------
+const FIELD_LABELS = {
+  location: "位置", dq: "DQ", determinants: "決定因子", fq: "FQ",
+  pair: "成對", contents: "內容", popular: "P", z: "Z", special: "特殊計分",
+};
+
+function describeAnswer(ans) {
+  if (!ans) return null;
+  const loc = `${ans.space ? "S" : ""}${ans.location_base}${ans.location_base !== "W" && ans.loc_num ? ans.loc_num : ""}`;
+  const dets = (ans.determinants || []).map(d => d.code + (d.ap || "")).join(".");
+  return {
+    location: loc || "-",
+    dq: ans.dq || "-",
+    determinants: dets || "-",
+    fq: ans.fq || "（無）",
+    pair: ans.pair ? "成對 (2)" : "不成對",
+    contents: (ans.contents || []).join(",") || "（無）",
+    popular: ans.popular ? "P" : "（無）",
+    z: (ans.z ?? "（無）"),
+    special: (ans.special || []).join(",") || "（無）",
+  };
+}
+
+function renderComparisonFeedback(container, item, fieldResults, userAnswer, title) {
+  const userDesc = describeAnswer(userAnswer) || {};
+  const keyDesc = describeAnswer(item.answer);
+  const values = Object.values(fieldResults);
+  const allCorrect = values.every(v => v === "correct");
+  const allOk = values.every(v => v !== "wrong");
+
+  const rows = Object.keys(FIELD_LABELS).map(k => {
+    const v = fieldResults[k];
+    const mark = v === "correct" ? "✓" : v === "lenient" ? "≈" : "✗";
+    return `<tr>
+      <th>${FIELD_LABELS[k]}</th>
+      <td>${escapeHtml(String(userDesc[k] ?? "-"))}</td>
+      <td class="feedback-cell ${v}" style="text-align:center">${mark}</td>
+      <td>${escapeHtml(String(keyDesc[k]))}</td>
+    </tr>`;
+  }).join("");
+
+  container.innerHTML = `
+    <div class="feedback-panel">
+      <strong>${title || (allCorrect ? "🎉 全部正確！" : allOk ? "大致正確（含合理歧見）" : "有錯誤，請對照下方答案")}</strong>
+      <div style="overflow-x:auto;margin-top:8px">
+        <table class="cmp-table" style="width:100%">
+          <thead><tr><th>欄位</th><th>你的答案</th><th>結果</th><th>正確答案</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="answer-raw" style="margin-top:8px">標準答案完整字串：${escapeHtml(item.answer_raw)}</div>
+    </div>
+  `;
 }
 
 function escapeHtml(s) {
@@ -503,23 +580,10 @@ function renderChips(containerId, codes, selectedArr) {
 async function doGrade(item) {
   const result = window.RorGrade.gradeItem(State.answer, item.answer);
   State.lastGrade = result;
-  saveLocalAttempt(item.id, result.allCorrect);
+  const answerSnapshot = JSON.parse(JSON.stringify(State.answer));
+  saveLocalAttempt(item.id, result.allCorrect, answerSnapshot, result.fields);
 
-  const labels = {
-    location: "位置", dq: "DQ", determinants: "決定因子", fq: "FQ",
-    pair: "成對", contents: "內容", popular: "P", z: "Z", special: "特殊計分",
-  };
-  const cellsHtml = Object.entries(result.fields).map(([k, v]) =>
-    `<div class="feedback-cell ${v}">${labels[k]}：${v === "correct" ? "✓ 正確" : v === "lenient" ? "≈ 合理歧見" : "✗ 錯誤"}</div>`
-  ).join("");
-
-  document.getElementById("feedbackBlock").innerHTML = `
-    <div class="feedback-panel">
-      <strong>${result.allCorrect ? "🎉 全部正確！" : result.allOkOrLenient ? "大致正確（含合理歧見）" : "有錯誤，請對照下方答案"}</strong>
-      <div class="feedback-grid">${cellsHtml}</div>
-      <div class="answer-raw">標準答案：${escapeHtml(item.answer_raw)}</div>
-    </div>
-  `;
+  renderComparisonFeedback(document.getElementById("feedbackBlock"), item, result.fields, answerSnapshot);
 
   window.RorGas.submitAttempt({
     user: State.user,
