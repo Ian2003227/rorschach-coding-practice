@@ -112,6 +112,10 @@ function setAuthMode(mode) {
   document.getElementById("confirmRow").classList.toggle("hidden", mode !== "register");
   document.getElementById("userPwInput").autocomplete = mode === "register" ? "new-password" : "current-password";
   document.getElementById("loginBtn").textContent = mode === "register" ? "註冊並進入" : "登入";
+  document.getElementById("authHeading").textContent = mode === "register" ? "建立你的帳號" : "歡迎回來";
+  document.getElementById("authSub").textContent = mode === "register"
+    ? "第一次使用？輸入組內的通關密語，自己取一個暱稱與個人密碼。"
+    : "輸入通關密語與你的帳號，繼續上次的練習。";
   document.getElementById("loginError").textContent = "";
 }
 
