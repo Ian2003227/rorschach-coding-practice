@@ -84,6 +84,21 @@ function restoreLastPosition(savedId) {
   if (idx >= 0) { State.posInOrder = idx; renderQuestion(); }
 }
 
+// ---------- Color style ----------
+const STYLE_LABELS = { notion: "Notion", classic: "經典暖棕" };
+
+function initStyleToggle() {
+  const btn = document.getElementById("styleBtn");
+  const label = () => { btn.textContent = "🎨 " + STYLE_LABELS[document.documentElement.dataset.style || "notion"]; };
+  label();
+  btn.addEventListener("click", () => {
+    const next = document.documentElement.dataset.style === "classic" ? "notion" : "classic";
+    document.documentElement.dataset.style = next;
+    try { localStorage.setItem("ror_style", next); } catch { /* per-browser preference only */ }
+    label();
+  });
+}
+
 // ---------- Login ----------
 let authMode = "login"; // "login" | "register"
 
@@ -372,7 +387,7 @@ function renderQuestion() {
 
   panel.innerHTML = `
     <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <a href="${window.RorConfig.REFERENCE_DRIVE_URL}" target="_blank" rel="noopener" class="btn-flag" style="display:inline-block;text-decoration:none;padding:6px 12px;border-radius:8px;font-size:0.85rem">📎 位置／形狀品質對照表（Google Drive）</a>
+      <a href="${window.RorConfig.REFERENCE_DRIVE_URL}" target="_blank" rel="noopener" class="btn-flag" style="display:inline-block;text-decoration:none;padding:6px 12px;border-radius:8px;font-size:0.85rem">📎 位置／形狀品質對照表（PDF）</a>
       ${statusBadge}
     </div>
     <div class="stim-row">
@@ -791,4 +806,5 @@ function renderReference() {
 }
 
 // ---------- Boot ----------
+initStyleToggle();
 initLogin();

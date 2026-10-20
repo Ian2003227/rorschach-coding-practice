@@ -1,15 +1,22 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-style="notion">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>羅夏克編碼練習</title>
+<title>台大臨床組 羅夏克編碼練習平台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
 <link rel="stylesheet" href="css/style.css" />
+<script>
+  // Apply the saved color style before first paint ("notion" default, or "classic").
+  try { document.documentElement.dataset.style = localStorage.getItem("ror_style") || "notion"; } catch (e) {}
+</script>
 </head>
 <body>
 
 <div id="loginPanel" class="panel">
-  <h1>羅夏克編碼練習平台</h1>
+  <h1>台大臨床組 羅夏克編碼練習平台</h1>
   <div class="auth-tabs">
     <button data-mode="login" class="active">登入</button>
     <button data-mode="register">註冊新帳號</button>
@@ -37,7 +44,7 @@
       <button data-view="dashboard">儀表板</button>
       <button data-view="reference">速查表</button>
     </nav>
-    <div class="user-badge"><span id="userBadge"></span> <button id="logoutBtn" class="btn-logout">登出</button></div>
+    <div class="user-badge"><button id="styleBtn" class="btn-style" title="切換配色"></button> <span id="userBadge"></span> <button id="logoutBtn" class="btn-logout">登出</button></div>
   </header>
 
   <div class="wrap">
