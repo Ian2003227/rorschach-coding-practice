@@ -17,7 +17,13 @@ async function postToGas(action, payload) {
     body: JSON.stringify({ action, payload }),
   });
   if (!res.ok) throw new Error("GAS_HTTP_" + res.status);
-  return res.json();
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Apps Script answers with an HTML page when the script errors or still needs authorization
+    throw new Error("GAS_NOT_JSON");
+  }
 }
 
 // Resolves to { ok, nickname, token } or { ok: false, error }; rejects only on network failure.

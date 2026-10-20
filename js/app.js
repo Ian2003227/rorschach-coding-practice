@@ -162,7 +162,9 @@ async function doLogin() {
         ? await window.RorGas.register(passphrase, nickname, password)
         : await window.RorGas.login(nickname, password);
     } catch (e) {
-      errEl.textContent = "無法連線到伺服器，請檢查網路後再試一次";
+      errEl.textContent = e.message === "GAS_NOT_JSON"
+        ? "後端程式回應異常（可能尚未授權或部署有誤），請通知管理者"
+        : "無法連線到伺服器，請檢查網路後再試一次";
       return;
     }
     if (!res.ok) { errEl.textContent = res.error || "登入失敗"; return; }

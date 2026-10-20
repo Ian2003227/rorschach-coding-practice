@@ -119,7 +119,7 @@ function register_(p) {
   try {
     if (findUser_(nickname)) return { ok: false, error: "這個暱稱已經有人使用，請換一個" };
     const salt = Utilities.getUuid();
-    usersSheet_().appendRow([new Date().toISOString(), text_(nickname), salt, hashPassword_(password, salt)]);
+    usersSheet_().appendRow([new Date().toISOString(), text_(nickname), text_(salt), text_(hashPassword_(password, salt))]);
   } finally {
     lock.releaseLock();
   }
@@ -165,6 +165,19 @@ function doPost(e) {
   }
 
   return jsonOut_({ ok: false, error: "unknown action" });
+}
+
+// Run this once from the Apps Script editor (select checkSetup, press Run) after pasting
+// the code: it triggers the permission prompt and reports whether ACCESS_CODE is set.
+function checkSetup() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  lock.releaseLock();
+  tokenSecret_();
+  usersSheet_();
+  recordsSheet_();
+  const code = props_().getProperty("ACCESS_CODE");
+  Logger.log(code ? "設定完成：ACCESS_CODE 已設定（" + code.length + " 個字）" : "尚未設定 ACCESS_CODE，請到「專案設定 → 指令碼屬性」新增");
 }
 
 function doGet(e) {
