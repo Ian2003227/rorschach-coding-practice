@@ -72,7 +72,13 @@ nav.tabs button.active { background: var(--accent); color: var(--accent-ink); bo
 #loginPanel { max-width: 420px; margin: 60px auto; }
 #loginPanel h1 { font-size: 1.3rem; margin-top: 0; }
 #loginPanel input, #loginPanel select { width: 100%; padding: 10px; margin: 6px 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font-size: 1rem; }
-#loginPanel button { width: 100%; padding: 10px; border-radius: 8px; border: none; background: var(--accent); color: var(--accent-ink); font-size: 1rem; cursor: pointer; }
+#loginPanel #loginBtn { width: 100%; padding: 10px; border-radius: 8px; border: none; background: var(--accent); color: var(--accent-ink); font-size: 1rem; cursor: pointer; }
+#loginPanel #loginBtn:disabled { opacity: 0.6; cursor: wait; }
+.auth-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.auth-tabs button { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; font-size: 0.95rem; }
+.auth-tabs button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.login-hint { font-size: 0.8rem; color: var(--muted); margin: -8px 0 14px; }
+.btn-logout { background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 2px 8px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; margin-left: 4px; }
 #loginError { color: var(--bad); font-size: 0.9rem; min-height: 1.2em; }
 
 /* Practice */

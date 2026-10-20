@@ -10,11 +10,22 @@
 
 <div id="loginPanel" class="panel">
   <h1>羅夏克編碼練習平台</h1>
+  <div class="auth-tabs">
+    <button data-mode="login" class="active">登入</button>
+    <button data-mode="register">註冊新帳號</button>
+  </div>
   <label>通關密語</label>
   <input id="pwInput" type="password" placeholder="輸入密語" autocomplete="off" />
-  <label>選擇使用者</label>
-  <select id="userSelect"></select>
-  <button id="loginBtn">進入</button>
+  <label>暱稱</label>
+  <input id="nicknameInput" type="text" maxlength="20" placeholder="自己取一個，之後用它登入" autocomplete="username" />
+  <label>個人密碼</label>
+  <input id="userPwInput" type="password" placeholder="至少 4 個字" autocomplete="current-password" />
+  <div id="confirmRow" class="hidden">
+    <label>再輸入一次個人密碼</label>
+    <input id="userPwConfirm" type="password" autocomplete="new-password" />
+    <p class="login-hint">個人密碼忘記了無法找回，只能換一個暱稱重新註冊，請記好。</p>
+  </div>
+  <button id="loginBtn">登入</button>
   <div id="loginError"></div>
 </div>
 
@@ -26,7 +37,7 @@
       <button data-view="dashboard">儀表板</button>
       <button data-view="reference">速查表</button>
     </nav>
-    <div class="user-badge" id="userBadge"></div>
+    <div class="user-badge"><span id="userBadge"></span> <button id="logoutBtn" class="btn-logout">登出</button></div>
   </header>
 
   <div class="wrap">
