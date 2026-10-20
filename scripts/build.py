@@ -2,7 +2,7 @@
 """Merge section_N.json files, validate, embed location-map images, and encrypt
 into data/items.enc. Run locally before each commit; never commit plaintext.
 
-Usage: python3 scripts/build.py [--password 818]
+Usage: python3 scripts/build.py --password <通關密語>
 """
 import argparse
 import base64
@@ -96,7 +96,7 @@ def encrypt(plaintext_bytes, password):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--password", default="818")
+    ap.add_argument("--password", required=True)
     ap.add_argument("--allow-problems", action="store_true", help="write output even if validation finds issues")
     args = ap.parse_args()
 

@@ -1,7 +1,8 @@
 // Main application controller: login/decrypt, practice view, dashboard, reference.
 
 const State = {
-  user: null,
+  user: null,          // nickname
+  token: null,         // signed session token from the backend
   items: [],          // decrypted item bank
   locImages: {},       // { "1": dataURI, ... }
   filtered: [],         // current ordered id list for practice
@@ -11,6 +12,7 @@ const State = {
   langMode: "both",      // "en" | "zh" | "both"
 };
 
+const SESSION_KEY = "ror_session";  // { nickname, token, passphrase } — "stay logged in" on this browser
 const LOCAL_KEY = () => `ror_local_attempts_${State.user}`;
 const LAST_ITEM_KEY = () => `ror_last_item_${State.user}`;
 
@@ -27,10 +29,9 @@ function saveLocalAttempt(itemId, allCorrect, answer, fieldResults) {
 // Build a per-item {allCorrect, at, count} summary from this user's server-side attempt
 // history, then merge it into the local cache so status badges / wrong-filter / overview
 // reflect what was answered on OTHER devices too, not just this browser.
-function buildServerAttemptMap(attempts, user) {
+function buildServerAttemptMap(attempts) {
   const byItem = {};
   for (const a of attempts) {
-    if (a.user !== user) continue;
     (byItem[a.item_id] = byItem[a.item_id] || []).push(a);
   }
   const map = {};
@@ -38,8 +39,8 @@ function buildServerAttemptMap(attempts, user) {
     list.sort((x, y) => new Date(x.timestamp) - new Date(y.timestamp));
     const last = list[list.length - 1];
     let answer = null, fieldResults = null;
-    try { answer = JSON.parse(last.answer_json || last.answer || "null"); } catch { /* ignore */ }
-    try { fieldResults = JSON.parse(last.field_results_json || last.field_results || "null"); } catch { /* ignore */ }
+    try { answer = JSON.parse(last.answer_json || "null"); } catch { /* ignore */ }
+    try { fieldResults = JSON.parse(last.field_results_json || "null"); } catch { /* ignore */ }
     map[id] = {
       allCorrect: last.all_correct === true || last.all_correct === "TRUE",
       at: new Date(last.timestamp).getTime() || Date.now(),
@@ -61,12 +62,17 @@ function mergeServerIntoLocal(serverMap) {
 
 async function syncAttemptsFromServer() {
   try {
-    const data = await window.RorGas.fetchAll();
-    const serverMap = buildServerAttemptMap(data.attempts || [], State.user);
-    mergeServerIntoLocal(serverMap);
+    const data = await window.RorGas.fetchMine(State.token);
+    mergeServerIntoLocal(buildServerAttemptMap(data.attempts || []));
     // refresh whatever's on screen so badges/overview reflect the sync
     if (!document.getElementById("view-practice").classList.contains("hidden")) renderQuestion();
-  } catch (e) { /* offline or GAS not configured yet — local cache still works */ }
+  } catch (e) {
+    if (e.message === "AUTH") {
+      alert("登入狀態已失效，請重新登入。");
+      logout();
+    }
+    // otherwise offline — local cache still works
+  }
 }
 
 function saveLastItem(itemId) {
@@ -79,39 +85,107 @@ function restoreLastPosition(savedId) {
 }
 
 // ---------- Login ----------
+let authMode = "login"; // "login" | "register"
+
+function loadSession() {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { return null; }
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  document.querySelectorAll(".auth-tabs button").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  document.getElementById("confirmRow").classList.toggle("hidden", mode !== "register");
+  document.getElementById("userPwInput").autocomplete = mode === "register" ? "new-password" : "current-password";
+  document.getElementById("loginBtn").textContent = mode === "register" ? "註冊並進入" : "登入";
+  document.getElementById("loginError").textContent = "";
+}
+
 function initLogin() {
-  const sel = document.getElementById("userSelect");
-  sel.innerHTML = window.RorConfig.USERS.map(u => `<option value="${u}">${u}</option>`).join("");
+  document.querySelectorAll(".auth-tabs button").forEach(b => b.addEventListener("click", () => setAuthMode(b.dataset.mode)));
   document.getElementById("loginBtn").addEventListener("click", doLogin);
-  document.getElementById("pwInput").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+  document.querySelectorAll("#loginPanel input").forEach(el =>
+    el.addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); }));
+  document.getElementById("logoutBtn").addEventListener("click", () => {
+    if (confirm("確定要登出嗎？（作答紀錄都已存在雲端，下次登入會接著做）")) logout();
+  });
+
+  const session = loadSession();
+  if (session && session.token && session.passphrase) resumeSession(session);
+}
+
+async function decryptItems(passphrase) {
+  const res = await fetch("data/items.enc");
+  if (!res.ok) throw new Error("items.enc 讀取失敗 (" + res.status + ")");
+  const data = await window.RorCrypto.decryptEnvelope(passphrase, await res.json());
+  State.items = data.items;
+  State.locImages = data.locImages || {};
+}
+
+async function resumeSession(session) {
+  try {
+    await decryptItems(session.passphrase);
+  } catch {
+    // passphrase changed since last visit (or file unreachable) — fall back to the login form
+    localStorage.removeItem(SESSION_KEY);
+    document.getElementById("nicknameInput").value = session.nickname || "";
+    return;
+  }
+  enterApp(session.nickname, session.token);
 }
 
 async function doLogin() {
-  const pw = document.getElementById("pwInput").value;
-  const user = document.getElementById("userSelect").value;
+  const passphrase = document.getElementById("pwInput").value;
+  const nickname = document.getElementById("nicknameInput").value.trim();
+  const password = document.getElementById("userPwInput").value;
   const errEl = document.getElementById("loginError");
+  const btn = document.getElementById("loginBtn");
   errEl.textContent = "";
-  if (!pw) { errEl.textContent = "請輸入密語"; return; }
-  try {
-    const res = await fetch("data/items.enc");
-    if (!res.ok) throw new Error("items.enc 讀取失敗 (" + res.status + ")");
-    const envelope = await res.json();
-    const data = await window.RorCrypto.decryptEnvelope(pw, envelope);
-    State.items = data.items;
-    State.locImages = data.locImages || {};
-    State.user = user;
-    document.getElementById("loginPanel").classList.add("hidden");
-    document.getElementById("appRoot").classList.remove("hidden");
-    document.getElementById("userBadge").textContent = "使用者：" + user;
-    initApp();
-    window.RorGas.flushQueue().then(() => syncAttemptsFromServer()).catch(() => syncAttemptsFromServer());
-  } catch (e) {
-    if (String(e.message).includes("WRONG_PASSWORD")) {
-      errEl.textContent = "密語錯誤，請再試一次";
-    } else {
-      errEl.textContent = "發生錯誤：" + e.message;
-    }
+  if (!passphrase) { errEl.textContent = "請輸入通關密語"; return; }
+  if (!nickname) { errEl.textContent = "請輸入暱稱"; return; }
+  if (!password) { errEl.textContent = "請輸入個人密碼"; return; }
+  if (authMode === "register") {
+    if (password.length < 4) { errEl.textContent = "個人密碼至少 4 個字"; return; }
+    if (password !== document.getElementById("userPwConfirm").value) { errEl.textContent = "兩次輸入的個人密碼不一樣"; return; }
   }
+
+  btn.disabled = true;
+  try {
+    try {
+      await decryptItems(passphrase);
+    } catch (e) {
+      errEl.textContent = String(e.message).includes("WRONG_PASSWORD") ? "通關密語錯誤，請再試一次" : "發生錯誤：" + e.message;
+      return;
+    }
+    let res;
+    try {
+      res = authMode === "register"
+        ? await window.RorGas.register(passphrase, nickname, password)
+        : await window.RorGas.login(nickname, password);
+    } catch (e) {
+      errEl.textContent = "無法連線到伺服器，請檢查網路後再試一次";
+      return;
+    }
+    if (!res.ok) { errEl.textContent = res.error || "登入失敗"; return; }
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ nickname: res.nickname, token: res.token, passphrase }));
+    enterApp(res.nickname, res.token);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function enterApp(nickname, token) {
+  State.user = nickname;
+  State.token = token;
+  document.getElementById("loginPanel").classList.add("hidden");
+  document.getElementById("appRoot").classList.remove("hidden");
+  document.getElementById("userBadge").textContent = "使用者：" + nickname;
+  initApp();
+  window.RorGas.flushQueue().then(() => syncAttemptsFromServer()).catch(() => syncAttemptsFromServer());
+}
+
+function logout() {
+  localStorage.removeItem(SESSION_KEY);
+  location.reload();
 }
 
 // ---------- App shell / nav ----------
@@ -323,7 +397,6 @@ function renderQuestion() {
     <div class="action-row">
       <button class="btn-primary" id="gradeBtn">送出並對答案</button>
       <button class="btn-secondary" id="nextBtn">下一題</button>
-      <button class="btn-flag" id="flagBtn">標記討論</button>
     </div>
 
     <div id="feedbackBlock"></div>
@@ -352,7 +425,6 @@ function renderQuestion() {
     State.posInOrder = Math.min(State.posInOrder + 1, State.filtered.length - 1);
     renderQuestion();
   });
-  document.getElementById("flagBtn").addEventListener("click", () => doFlag(item));
 }
 
 function syncLangButtons() {
@@ -586,124 +658,72 @@ async function doGrade(item) {
   renderComparisonFeedback(document.getElementById("feedbackBlock"), item, result.fields, answerSnapshot);
 
   window.RorGas.submitAttempt({
-    user: State.user,
+    token: State.token,
     item_id: item.id,
     section: item.section,
     answer: State.answer,
     field_results: result.fields,
     all_correct: result.allCorrect,
-    duration_sec: 0,
   }).catch(() => {});
 
   if (!document.getElementById("overviewPanel").classList.contains("hidden")) renderOverview();
 }
 
-function doFlag(item) {
-  const note = prompt("要記錄什麼討論重點？（可留空）") || "";
-  const url = window.RorConfig.GAS_WEB_APP_URL;
-  if (!url) { alert("尚未設定後端網址，暫時無法送出標記（已略過）。"); return; }
-  fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action: "flag", payload: { user: State.user, item_id: item.id, note } }),
-  }).then(() => alert("已標記，讀書會時可一起討論。")).catch(() => alert("送出失敗，請檢查網路。"));
-}
-
 // ---------- Dashboard ----------
-async function renderDashboard() {
+// Personal stats only, computed from the local cache (already merged with the server
+// history at login), counting each item's most recent attempt.
+function renderDashboard() {
   const panel = document.getElementById("dashboardPanel");
-  panel.innerHTML = "<p>載入中…</p>";
-  let data;
-  try {
-    data = await window.RorGas.fetchAll();
-  } catch (e) {
-    panel.innerHTML = `<p>目前無法連線到後端（尚未設定 GAS 網址，或離線）。以下顯示本機進度。</p>`;
-    renderLocalOnlyDashboard(panel);
-    return;
-  }
-  const attempts = data.attempts || [];
-  const flags = data.flags || [];
+  const local = loadLocalAttempts();
+  const usable = State.items.filter(i => !i.missing_source);
+  const done = usable.filter(i => local[i.id]);
+  const correct = done.filter(i => local[i.id].allCorrect).length;
+  const tries = done.reduce((sum, i) => sum + (local[i.id].count || 1), 0);
+  const pct = (c, t) => t ? Math.round((c / t) * 100) + "%" : "-";
 
-  const byUser = {};
-  for (const u of window.RorConfig.USERS) byUser[u] = { total: 0, correct: 0, fieldCorrect: {}, fieldTotal: {} };
-  for (const a of attempts) {
-    const u = a.user;
-    if (!byUser[u]) byUser[u] = { total: 0, correct: 0, fieldCorrect: {}, fieldTotal: {} };
-    byUser[u].total++;
-    if (a.all_correct === true || a.all_correct === "TRUE") byUser[u].correct++;
-    let fr = {};
-    try { fr = JSON.parse(a.field_results_json || a.field_results || "{}"); } catch {}
-    for (const [field, v] of Object.entries(fr)) {
-      byUser[u].fieldTotal[field] = (byUser[u].fieldTotal[field] || 0) + 1;
-      if (v === "correct") byUser[u].fieldCorrect[field] = (byUser[u].fieldCorrect[field] || 0) + 1;
-    }
-  }
-
-  const statCards = window.RorConfig.USERS.map(u => {
-    const s = byUser[u];
-    const pct = s.total ? Math.round((s.correct / s.total) * 100) : 0;
-    return `<div class="stat-card"><div class="num">${pct}%</div><div class="label">${u}（${s.total} 題）</div></div>`;
-  }).join("");
+  const statCards = [
+    [`${done.length} / ${usable.length}`, "已作答題數"],
+    [pct(correct, done.length), `全對率（${correct} 題全對）`],
+    [done.length - correct, "待訂正題數"],
+    [tries, "累計作答次數"],
+  ].map(([num, label]) => `<div class="stat-card"><div class="num">${num}</div><div class="label">${label}</div></div>`).join("");
 
   const fieldNames = ["location", "dq", "determinants", "fq", "pair", "contents", "popular", "z", "special"];
   const fieldLabels = { location: "位置", dq: "DQ", determinants: "決定因子", fq: "FQ", pair: "成對", contents: "內容", popular: "P", z: "Z", special: "特殊計分" };
-  let fieldTableRows = fieldNames.map(f => {
-    const cells = window.RorConfig.USERS.map(u => {
-      const s = byUser[u];
-      const t = s.fieldTotal[f] || 0;
-      const c = s.fieldCorrect[f] || 0;
-      return `<td>${t ? Math.round((c / t) * 100) + "%" : "-"}</td>`;
-    }).join("");
-    return `<tr><th>${fieldLabels[f]}</th>${cells}</tr>`;
+  const graded = done.map(i => local[i.id].fieldResults).filter(Boolean);
+  const fieldRows = fieldNames.map(f => {
+    const vals = graded.map(fr => fr[f]).filter(Boolean);
+    const c = vals.filter(v => v === "correct").length;
+    const l = vals.filter(v => v === "lenient").length;
+    return `<tr><th>${fieldLabels[f]}</th><td>${pct(c, vals.length)}</td><td>${l || "-"}</td><td>${vals.length - c - l || "-"}</td></tr>`;
   }).join("");
 
-  // items attempted by everyone -> consistency table
-  const byItem = {};
-  for (const a of attempts) {
-    (byItem[a.item_id] = byItem[a.item_id] || {})[a.user] = a;
-  }
-  const consensusRows = Object.entries(byItem)
-    .filter(([, users]) => window.RorConfig.USERS.every(u => users[u]))
-    .slice(-15)
-    .map(([itemId, users]) => {
-      const cells = window.RorConfig.USERS.map(u => {
-        const ok = users[u].all_correct === true || users[u].all_correct === "TRUE";
-        return `<td style="color:${ok ? "var(--ok)" : "var(--bad)"}">${ok ? "✓" : "✗"}</td>`;
-      }).join("");
-      return `<tr><th>#${itemId}</th>${cells}</tr>`;
-    }).join("");
-
-  const flagRows = flags.slice(-20).reverse().map(f =>
-    `<tr><td>#${f.item_id}</td><td>${f.user}</td><td>${f.note || ""}</td></tr>`
-  ).join("");
+  const groupRows = (keys, keyOf, label) => keys.map(k => {
+    const items = usable.filter(i => String(keyOf(i)) === String(k));
+    const d = items.filter(i => local[i.id]);
+    const c = d.filter(i => local[i.id].allCorrect).length;
+    return `<tr><th>${label} ${k}</th><td>${d.length} / ${items.length}</td><td>${pct(c, d.length)}</td></tr>`;
+  }).join("");
+  const sections = [...new Set(usable.map(i => i.section))].sort((a, b) => a - b);
+  const sectionRows = groupRows(sections, i => i.section, "Section");
+  const cardRows = groupRows(window.RorConst.CARDS, i => i.card, "卡片");
 
   panel.innerHTML = `
-    <h2>整體表現</h2>
+    <h2>我的學習狀況</h2>
+    <p style="font-size:0.85rem;color:var(--muted)">以每題「最後一次作答」計算。</p>
     <div class="stat-grid">${statCards}</div>
 
     <h3 style="margin-top:20px">各欄位正確率</h3>
-    <table class="cmp-table"><thead><tr><th>欄位</th>${window.RorConfig.USERS.map(u => `<th>${u}</th>`).join("")}</tr></thead>
-    <tbody>${fieldTableRows}</tbody></table>
+    <table class="cmp-table"><thead><tr><th>欄位</th><th>正確率</th><th>合理歧見</th><th>答錯</th></tr></thead>
+    <tbody>${fieldRows}</tbody></table>
 
-    <h3 style="margin-top:20px">四人一致性（最近共同作答題目）</h3>
-    <table class="cmp-table"><thead><tr><th>題號</th>${window.RorConfig.USERS.map(u => `<th>${u}</th>`).join("")}</tr></thead>
-    <tbody>${consensusRows || '<tr><td colspan="5">尚無四人都作答過的題目</td></tr>'}</tbody></table>
+    <h3 style="margin-top:20px">各章節</h3>
+    <table class="cmp-table"><thead><tr><th>章節</th><th>已作答</th><th>全對率</th></tr></thead>
+    <tbody>${sectionRows}</tbody></table>
 
-    <h3 style="margin-top:20px">討論標記</h3>
-    <table class="cmp-table"><thead><tr><th>題號</th><th>標記者</th><th>備註</th></tr></thead>
-    <tbody>${flagRows || '<tr><td colspan="3">尚無標記</td></tr>'}</tbody></table>
-  `;
-}
-
-function renderLocalOnlyDashboard(panel) {
-  const local = loadLocalAttempts();
-  const ids = Object.keys(local);
-  const correct = ids.filter(id => local[id].allCorrect).length;
-  panel.innerHTML += `
-    <div class="stat-grid">
-      <div class="stat-card"><div class="num">${ids.length}</div><div class="label">已作答</div></div>
-      <div class="stat-card"><div class="num">${ids.length ? Math.round(correct / ids.length * 100) : 0}%</div><div class="label">全對率</div></div>
-    </div>
+    <h3 style="margin-top:20px">各卡片</h3>
+    <table class="cmp-table"><thead><tr><th>卡片</th><th>已作答</th><th>全對率</th></tr></thead>
+    <tbody>${cardRows}</tbody></table>
   `;
 }
 

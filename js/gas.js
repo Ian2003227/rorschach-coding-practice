@@ -1,5 +1,5 @@
 // Talks to the Google Apps Script Web App backend. Falls back to a localStorage queue
-// when offline or before GAS_WEB_APP_URL is configured, and flushes it opportunistically.
+// when offline, and flushes it opportunistically.
 
 const QUEUE_KEY = "ror_pending_attempts";
 
@@ -20,6 +20,16 @@ async function postToGas(action, payload) {
   return res.json();
 }
 
+// Resolves to { ok, nickname, token } or { ok: false, error }; rejects only on network failure.
+function register(accessCode, nickname, password) {
+  return postToGas("register", { access_code: accessCode, nickname, password });
+}
+function login(nickname, password) {
+  return postToGas("login", { nickname, password });
+}
+
+// record must carry the session token. A record the server rejects (bad token) is dropped,
+// not queued: retrying it can never succeed.
 async function submitAttempt(record) {
   try {
     await postToGas("submit", record);
@@ -49,8 +59,11 @@ async function flushQueue() {
   return { flushed, remaining: remaining.length };
 }
 
-async function fetchAll() {
-  return postToGas("all", {});
+// This user's own attempt history. Throws Error("AUTH") when the token is no longer valid.
+async function fetchMine(token) {
+  const data = await postToGas("mine", { token });
+  if (!data.ok) throw new Error(data.error || "GAS_ERROR");
+  return data;
 }
 
-window.RorGas = { submitAttempt, flushQueue, fetchAll, getQueue };
+window.RorGas = { register, login, submitAttempt, flushQueue, fetchMine, getQueue };
