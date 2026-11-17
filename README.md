@@ -1,3 +1,7 @@
+> [!CAUTION]
+> # 🚨 本平台僅限台大臨床組實習使用，不開放給其他單位使用。
+
+
 # 羅夏克墨漬測驗編碼練習平台
 
 給臺大臨床心理學組使用的 Rorschach Comprehensive System 編碼練習網站。題庫來源是版權保護的練習題手冊，因此**題目內容一律加密**，只有知道通關密語的人能在瀏覽器端解密使用；GitHub repo 本身是公開的，但看不到任何明文題目。**請勿將通關密語外流到組外。**
@@ -12,41 +16,3 @@
 5. 填寫九個欄位（位置、DQ、決定因子、FQ、成對、內容、Popular、Z、特殊計分）後按「送出並對答案」，會立即逐欄位標示對錯（黃色代表 Exner 手冊中認可的合理歧見，例如 FC vs CF）。
 6. 「儀表板」分頁看自己的進度：已作答題數、全對率、各欄位／各章節／各卡片正確率。
 7. 「速查表」分頁有決定因子/內容/特殊計分代碼表，以及從本題庫實際答案萃取出的 Z 分數與 Popular 對照。
-
-## 給維護者：專案結構
-
-```
-index.html, css/, js/          前端（純靜態，無需 build step）
-data/items.enc                 加密後的題庫（300題，含逐題翻譯、答案、位置圖）— 唯一進 git 的資料檔
-data-raw/                      transcription 中間產物，gitignore，不進 git
-assets/cards/                  10張標準墨漬卡（1921年作品，公有領域，明文）
-assets/loc/                    位置圖原始檔（明文，gitignore，只用來 build，不進 git）
-gas/Code.gs                    Google Apps Script 後端（見 gas/README.md 部署步驟）
-scripts/build.py               合併 data-raw/section*.json → 加密輸出 data/items.enc
-scripts/rekey.py               更換通關密語（不需要 data-raw，直接把 items.enc 用新密語重新加密）
-```
-
-### 重新產生題庫（改了 data-raw 之後）
-
-```bash
-python3 scripts/build.py --password <通關密語>
-git add data/items.enc
-git commit -m "Update item bank"
-git push
-```
-
-`scripts/build.py` 會先驗證 300 題完整、id 連續無缺漏、每題必要欄位齊全，有問題會擋下來不讓你誤 build 出壞檔。
-
-### 更換通關密語
-
-```bash
-python3 scripts/rekey.py --old <舊密語> --new <新密語>
-git add data/items.enc && git commit -m "Rotate passphrase" && git push
-```
-
-再到 Apps Script 的「指令碼屬性」把 `ACCESS_CODE` 改成新密語（見 gas/README.md）。已註冊的帳號不受影響，大家下次進站輸入新密語即可。**密語不要寫進 repo 的任何檔案。**
-
-### 後端部署
-
-見 [gas/README.md](gas/README.md)。部署完把網址填進 `js/config.js` 的 `GAS_WEB_APP_URL`。
-
